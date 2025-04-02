@@ -1,0 +1,32 @@
+stages:
+  - deploy
+
+variables:
+  FULL_DEPLOY_DIR: "$DEPLOY_MAIN_DIR$DEPLOY_DIR"
+
+deploy:
+  stage: deploy
+  before_script:
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -H $SERVER_HOST >> ~/.ssh/known_hosts
+  script:
+    - ssh $SERVER_USER@$SERVER_HOST "
+      echo 'Creating deploy directory - $FULL_DEPLOY_DIR' &&
+      mkdir -p $FULL_DEPLOY_DIR
+      "
+    - cp "$ENV_FILE" .env
+    - scp docker-compose.yml .env init.sql "$SERVER_USER@$SERVER_HOST:$FULL_DEPLOY_DIR/"
+    - ssh $SERVER_USER@$SERVER_HOST "
+      cd $FULL_DEPLOY_DIR &&
+      echo 'Stopping service...' &&
+      docker-compose --env-file .env down &&
+      echo 'Running new service...' &&
+      docker-compose --env-file .env up -d &&
+      echo 'Removing unused images...' &&
+      docker image prune -f || true
+      "
+  only:
+    - main
