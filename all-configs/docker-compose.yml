@@ -1,6 +1,25 @@
 version: '3.8'
 services:
 
+  database:
+    image: postgres:17.4-alpine
+    container_name: task-service-db
+    restart: always
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
+    volumes:
+      - task-service-db:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - task-tracker-network
+
   redis:
     image: redis:latest
     container_name: redis
@@ -9,6 +28,75 @@ services:
     networks:
       - task-tracker-network
 
+  task-tracker-service:
+    image: ${TASK_SERVICE_IMAGE_NAME_WITH_TAG}
+    container_name: ${TASK_SERVICE_APP_NAME}
+    restart: always
+    environment:
+      - PORT=${TASK_SERVICE_CONTAINER_PORT}
+      - DB_URL=${DB_URL}
+      - DB_CONTAINER_PORT=${DB_CONTAINER_PORT}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - ACCESS_SECRET=${ACCESS_SECRET}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_CONTAINER_PORT=${REDIS_CONTAINER_PORT}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - CACHE_TIME=${CACHE_TIME}
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - task-tracker-network
+
+  auth-service:
+    image: ${AUTH_SERVICE_IMAGE_NAME_WITH_TAG}
+    container_name: ${AUTH_SERVICE_APP_NAME}
+    restart: always
+    environment:
+      - PORT=${AUTH_SERVICE_CONTAINER_PORT}
+      - DB_URL=${DB_URL}
+      - DB_CONTAINER_PORT=${DB_CONTAINER_PORT}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - ACCESS_SECRET=${ACCESS_SECRET}
+      - ACCESS_SECRET_EXPIRE=${ACCESS_SECRET_EXPIRE}
+      - REFRESH_SECRET=${REFRESH_SECRET}
+      - REFRESH_SECRET_EXPIRE=${REFRESH_SECRET_EXPIRE}
+    depends_on:
+      database:
+        condition: service_healthy
+      task-tracker-service:
+        condition: service_started
+    networks:
+      - task-tracker-network
+
+  gateway-service:
+    image: ${GATEWAY_SERVICE_IMAGE_NAME_WITH_TAG}
+    container_name: ${GATEWAY_SERVICE_APP_NAME}
+    restart: always
+    environment:
+      - PORT=${GATEWAY_SERVICE_CONTAINER_PORT}
+      - AUTH_SERVICE_PORT=${AUTH_SERVICE_CONTAINER_PORT}
+      - TASK_SERVICE_PORT=${TASK_SERVICE_CONTAINER_PORT}
+    ports:
+      - ${GATEWAY_SERVICE_HOST_PORT}:${GATEWAY_SERVICE_CONTAINER_PORT}
+    networks:
+      - task-tracker-network
+
+  task-tracker-frontend:
+    image: ${FRONTEND_IMAGE_NAME_WITH_TAG}
+    container_name: ${FRONTEND_APP_NAME}
+    restart: always
+    ports:
+      - ${FRONTEND_HOST_PORT}:${FRONTEND_CONTAINER_PORT}
+    networks:
+      - task-tracker-network
+
+volumes:
+  task-service-db:
+  
 networks:
   task-tracker-network:
-    external: true
