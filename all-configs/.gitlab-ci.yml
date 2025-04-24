@@ -1,32 +1,66 @@
 stages:
+  - copy-configs
   - deploy
 
 variables:
   FULL_DEPLOY_DIR: "$DEPLOY_MAIN_DIR$DEPLOY_DIR"
+  BACKEND_CI_REGISTRY: "registry.gitlab.com/task-tracker8203203/task-tracker-backend"
+  FRONTEND_CI_REGISTRY: "registry.gitlab.com/task-tracker8203203/task-tracker-frontend"
+  TASK_SERVICE_IMAGE_NAME: "$BACKEND_CI_REGISTRY/$TASK_SERVICE_APP_NAME/$TASK_SERVICE_APP_NAME"
+  AUTH_SERVICE_IMAGE_NAME: "$BACKEND_CI_REGISTRY/$AUTH_SERVICE_APP_NAME/$AUTH_SERVICE_APP_NAME"
+  GATEWAY_SERVICE_IMAGE_NAME: "$BACKEND_CI_REGISTRY/$GATEWAY_SERVICE_APP_NAME/$GATEWAY_SERVICE_APP_NAME"
+  FRONTEND_IMAGE_NAME: "$FRONTEND_CI_REGISTRY/$FRONTEND_APP_NAME/$FRONTEND_APP_NAME"
+  IMAGE_TAG: "latest"
+  DOCKER_DRIVER: "overlay2"
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
 
-deploy:
-  stage: deploy
-  before_script:
-    - apk add --no-cache openssh-client
-    - mkdir -p ~/.ssh
-    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
-    - chmod 600 ~/.ssh/id_rsa
-    - ssh-keyscan -H $SERVER_HOST >> ~/.ssh/known_hosts
+before_script:
+  - apk add --no-cache openssh-client
+  - mkdir -p ~/.ssh
+  - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+  - chmod 600 ~/.ssh/id_rsa
+  - ssh-keyscan -H $SERVER_HOST >> ~/.ssh/known_hosts
+
+copy-configs:
+  stage: copy-configs
   script:
     - ssh $SERVER_USER@$SERVER_HOST "
       echo 'Creating deploy directory - $FULL_DEPLOY_DIR' &&
       mkdir -p $FULL_DEPLOY_DIR
       "
     - cp "$ENV_FILE" .env
-    - scp docker-compose.yml .env "$SERVER_USER@$SERVER_HOST:$FULL_DEPLOY_DIR/"
+    - scp docker-compose.yml .env init.sql "$SERVER_USER@$SERVER_HOST:$FULL_DEPLOY_DIR/"
     - ssh $SERVER_USER@$SERVER_HOST "
       cd $FULL_DEPLOY_DIR &&
-      echo 'Stopping service...' &&
-      docker-compose --env-file .env down &&
-      echo 'Running new service...' &&
-      docker-compose --env-file .env up -d &&
-      echo 'Removing unused images...' &&
-      docker image prune -f || true
+      echo -e "TASK_SERVICE_IMAGE_NAME_WITH_TAG=$TASK_SERVICE_IMAGE_NAME:$IMAGE_TAG" >> .env &&
+      echo -e "AUTH_SERVICE_IMAGE_NAME_WITH_TAG=$AUTH_SERVICE_IMAGE_NAME:$IMAGE_TAG" >> .env &&
+      echo -e "GATEWAY_SERVICE_IMAGE_NAME_WITH_TAG=$GATEWAY_SERVICE_IMAGE_NAME:$IMAGE_TAG" >> .env &&
+      echo -e "FRONTEND_IMAGE_NAME_WITH_TAG=$FRONTEND_IMAGE_NAME:$IMAGE_TAG" >> .env &&
+      echo -e "TASK_SERVICE_APP_NAME=$TASK_SERVICE_APP_NAME" >> .env &&
+      echo -e "AUTH_SERVICE_APP_NAME=$AUTH_SERVICE_APP_NAME" >> .env &&
+      echo -e "GATEWAY_SERVICE_APP_NAME=$GATEWAY_SERVICE_APP_NAME" >> .env &&
+      echo -e "FRONTEND_APP_NAME=$FRONTEND_APP_NAME" >> .env
       "
   only:
     - main
+
+deploy:
+  stage: deploy
+  script:
+    - ssh $SERVER_USER@$SERVER_HOST "
+      cd $FULL_DEPLOY_DIR &&
+      echo 'Stopping services...' &&
+      docker-compose --env-file .env down &&
+      echo 'Running new services...' &&
+      docker-compose --env-file .env up -d --build &&
+      echo 'Removing unused images...' &&
+      docker image prune -f &&
+      echo 'Current running containers:' &&
+      docker-compose ps
+      "
+  only:
+    - main
+  dependencies:
+    - copy-configs
+  when: manual
